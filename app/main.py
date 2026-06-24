@@ -2,16 +2,17 @@ import os
 import jwt
 import bcrypt
 import datetime
+import functools
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
-import functools
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
-limiter = Limiter(get_remote_address, app=app, default_limits=["200 per day", "50 per hour"])
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["DATABASE_URL"]
+
 db = SQLAlchemy(app)
+limiter = Limiter(get_remote_address, app=app, default_limits=["200 per day", "50 per hour"])
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "fallback")
 
@@ -42,12 +43,6 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
-@app.route("/me")
-@token_required
-def me():
-    user = User.query.get(request.user_id)
-    return jsonify({"id": user.id, "username": user.username})
-
 @app.route("/")
 def home():
     return {"status": "SecureVault running"}
@@ -58,6 +53,7 @@ def init_db():
     return {"database": "tables created ✅"}
 
 @app.route("/register", methods=["POST"])
+@limiter.limit("5 per minute")
 def register():
     data = request.json
     existing = User.query.filter_by(username=data["username"]).first()
@@ -70,6 +66,7 @@ def register():
     return jsonify({"message": "User created ✅"}), 201
 
 @app.route("/login", methods=["POST"])
+@limiter.limit("10 per minute")
 def login():
     data = request.json
     user = User.query.filter_by(username=data["username"]).first()
@@ -81,15 +78,17 @@ def login():
         return jsonify({"token": token})
     return jsonify({"message": "Invalid credentials ❌"}), 401
 
+@app.route("/me")
+@token_required
+def me():
+    user = User.query.get(request.user_id)
+    return jsonify({"id": user.id, "username": user.username})
+
 @app.route("/secrets", methods=["POST"])
 @token_required
 def store_secret():
     data = request.json
-    secret = Secret(
-        user_id=request.user_id,
-        name=data["name"],
-        value=data["value"]
-    )
+    secret = Secret(user_id=request.user_id, name=data["name"], value=data["value"])
     db.session.add(secret)
     db.session.commit()
     return jsonify({"message": "Secret stored ✅"}), 201
@@ -99,9 +98,6 @@ def store_secret():
 def get_secrets():
     secrets = Secret.query.filter_by(user_id=request.user_id).all()
     return jsonify([{"id": s.id, "name": s.name, "value": s.value} for s in secrets])
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
 
 @app.route("/secrets/<int:secret_id>", methods=["DELETE"])
 @token_required
@@ -113,12 +109,5 @@ def delete_secret(secret_id):
     db.session.commit()
     return jsonify({"message": "Secret deleted ✅"})
 
-@app.route("/register", methods=["POST"])
-@limiter.limit("5 per minute")
-def register():
-    ...
-
-@app.route("/login", methods=["POST"])
-@limiter.limit("10 per minute")
-def login():
-    ...
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
