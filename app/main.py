@@ -7,11 +7,7 @@ from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-
 from cryptography.fernet import Fernet
-
-FERNET_KEY = os.environ.get("vEjEB-_ubQxLGchyQLfOPDutwC0Avp-c3SJsqLvJRkk=")
-fernet = Fernet(FERNET_KEY.encode())
 
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["DATABASE_URL"]
@@ -19,7 +15,12 @@ app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["DATABASE_URL"]
 db = SQLAlchemy(app)
 limiter = Limiter(get_remote_address, app=app, default_limits=["200 per day", "50 per hour"])
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "fallback")
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable is not set!")
+
+FERNET_KEY = os.environ.get("FERNET_KEY")
+fernet = Fernet(FERNET_KEY.encode()) if FERNET_KEY else None
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -93,8 +94,8 @@ def me():
 @token_required
 def store_secret():
     data = request.json
-    encrypted_value = fernet.encrypt(data["value"].encode()).decode()
-    secret = Secret(user_id=request.user_id, name=data["name"], value=encrypted_value)
+    value = fernet.encrypt(data["value"].encode()).decode() if fernet else data["value"]
+    secret = Secret(user_id=request.user_id, name=data["name"], value=value)
     db.session.add(secret)
     db.session.commit()
     return jsonify({"message": "Secret stored ✅"}), 201
@@ -106,8 +107,9 @@ def get_secrets():
     return jsonify([{
         "id": s.id,
         "name": s.name,
-        "value": fernet.decrypt(s.value.encode()).decode()
+        "value": fernet.decrypt(s.value.encode()).decode() if fernet else s.value
     } for s in secrets])
+
 @app.route("/secrets/<int:secret_id>", methods=["DELETE"])
 @token_required
 def delete_secret(secret_id):
