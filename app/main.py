@@ -8,6 +8,11 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
+from cryptography.fernet import Fernet
+
+FERNET_KEY = os.environ.get("vEjEB-_ubQxLGchyQLfOPDutwC0Avp-c3SJsqLvJRkk=")
+fernet = Fernet(FERNET_KEY.encode())
+
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["DATABASE_URL"]
 
@@ -88,7 +93,8 @@ def me():
 @token_required
 def store_secret():
     data = request.json
-    secret = Secret(user_id=request.user_id, name=data["name"], value=data["value"])
+    encrypted_value = fernet.encrypt(data["value"].encode()).decode()
+    secret = Secret(user_id=request.user_id, name=data["name"], value=encrypted_value)
     db.session.add(secret)
     db.session.commit()
     return jsonify({"message": "Secret stored ✅"}), 201
@@ -97,8 +103,11 @@ def store_secret():
 @token_required
 def get_secrets():
     secrets = Secret.query.filter_by(user_id=request.user_id).all()
-    return jsonify([{"id": s.id, "name": s.name, "value": s.value} for s in secrets])
-
+    return jsonify([{
+        "id": s.id,
+        "name": s.name,
+        "value": fernet.decrypt(s.value.encode()).decode()
+    } for s in secrets])
 @app.route("/secrets/<int:secret_id>", methods=["DELETE"])
 @token_required
 def delete_secret(secret_id):
