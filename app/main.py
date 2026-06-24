@@ -8,10 +8,17 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from cryptography.fernet import Fernet
+from flasgger import Swagger
 
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["DATABASE_URL"]
-
+app.config["SWAGGER"] = {
+    "title": "SecureVault API",
+    "description": "A secure REST API for storing and managing secrets",
+    "version": "1.0.0",
+    "uiversion": 3
+}
+swagger = Swagger(app)
 db = SQLAlchemy(app)
 limiter = Limiter(get_remote_address, app=app, default_limits=["200 per day", "50 per hour"])
 
@@ -51,16 +58,57 @@ def token_required(f):
 
 @app.route("/")
 def home():
+    """
+    Health check
+    ---
+    tags:
+      - General
+    responses:
+      200:
+        description: API is running
+    """
     return {"status": "SecureVault running"}
 
 @app.route("/init-db")
 def init_db():
+    """
+    Initialize database tables
+    ---
+    tags:
+      - General
+    responses:
+      200:
+        description: Tables created
+    """
     db.create_all()
     return {"database": "tables created ✅"}
 
 @app.route("/register", methods=["POST"])
 @limiter.limit("5 per minute")
 def register():
+    """
+    Register a new user
+    ---
+    tags:
+      - Auth
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            username:
+              type: string
+              example: malhar
+            password:
+              type: string
+              example: test123
+    responses:
+      201:
+        description: User created
+      409:
+        description: Username already taken
+    """
     data = request.json
     existing = User.query.filter_by(username=data["username"]).first()
     if existing:
@@ -74,6 +122,29 @@ def register():
 @app.route("/login", methods=["POST"])
 @limiter.limit("10 per minute")
 def login():
+    """
+    Login and get a JWT token
+    ---
+    tags:
+      - Auth
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            username:
+              type: string
+              example: malhar
+            password:
+              type: string
+              example: test123
+    responses:
+      200:
+        description: JWT token returned
+      401:
+        description: Invalid credentials
+    """
     data = request.json
     user = User.query.filter_by(username=data["username"]).first()
     if user and bcrypt.checkpw(data["password"].encode(), user.password.encode()):
@@ -87,12 +158,57 @@ def login():
 @app.route("/me")
 @token_required
 def me():
+    """
+    Get current user profile
+    ---
+    tags:
+      - Users
+    parameters:
+      - in: header
+        name: Authorization
+        type: string
+        required: true
+        description: Bearer <token>
+    responses:
+      200:
+        description: User profile
+      401:
+        description: Unauthorized
+    """
     user = User.query.get(request.user_id)
     return jsonify({"id": user.id, "username": user.username})
 
 @app.route("/secrets", methods=["POST"])
 @token_required
 def store_secret():
+    """
+    Store a new encrypted secret
+    ---
+    tags:
+      - Secrets
+    parameters:
+      - in: header
+        name: Authorization
+        type: string
+        required: true
+        description: Bearer <token>
+      - in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            name:
+              type: string
+              example: github_token
+            value:
+              type: string
+              example: ghp_supersecret123
+    responses:
+      201:
+        description: Secret stored
+      401:
+        description: Unauthorized
+    """
     data = request.json
     value = fernet.encrypt(data["value"].encode()).decode() if fernet else data["value"]
     secret = Secret(user_id=request.user_id, name=data["name"], value=value)
@@ -103,19 +219,60 @@ def store_secret():
 @app.route("/secrets", methods=["GET"])
 @token_required
 def get_secrets():
+    """
+    Retrieve all secrets for the current user
+    ---
+    tags:
+      - Secrets
+    parameters:
+      - in: header
+        name: Authorization
+        type: string
+        required: true
+        description: Bearer <token>
+    responses:
+      200:
+        description: List of decrypted secrets
+      401:
+        description: Unauthorized
+    """
     secrets = Secret.query.filter_by(user_id=request.user_id).all()
     result = []
     for s in secrets:
         try:
             value = fernet.decrypt(s.value.encode()).decode() if fernet else s.value
         except Exception:
-            value = s.value  # plain text from before encryption was added
+            value = s.value
         result.append({"id": s.id, "name": s.name, "value": value})
     return jsonify(result)
 
 @app.route("/secrets/<int:secret_id>", methods=["DELETE"])
 @token_required
 def delete_secret(secret_id):
+    """
+    Delete a secret by ID
+    ---
+    tags:
+      - Secrets
+    parameters:
+      - in: header
+        name: Authorization
+        type: string
+        required: true
+        description: Bearer <token>
+      - in: path
+        name: secret_id
+        type: integer
+        required: true
+        description: ID of the secret to delete
+    responses:
+      200:
+        description: Secret deleted
+      404:
+        description: Secret not found
+      401:
+        description: Unauthorized
+    """
     secret = Secret.query.filter_by(id=secret_id, user_id=request.user_id).first()
     if not secret:
         return jsonify({"message": "Secret not found ❌"}), 404
