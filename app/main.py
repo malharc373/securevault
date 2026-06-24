@@ -104,11 +104,14 @@ def store_secret():
 @token_required
 def get_secrets():
     secrets = Secret.query.filter_by(user_id=request.user_id).all()
-    return jsonify([{
-        "id": s.id,
-        "name": s.name,
-        "value": fernet.decrypt(s.value.encode()).decode() if fernet else s.value
-    } for s in secrets])
+    result = []
+    for s in secrets:
+        try:
+            value = fernet.decrypt(s.value.encode()).decode() if fernet else s.value
+        except Exception:
+            value = s.value  # plain text from before encryption was added
+        result.append({"id": s.id, "name": s.name, "value": value})
+    return jsonify(result)
 
 @app.route("/secrets/<int:secret_id>", methods=["DELETE"])
 @token_required
