@@ -5,7 +5,10 @@ import datetime
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 import functools
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
+limiter = Limiter(get_remote_address, app=app, default_limits=["200 per day", "50 per hour"])
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["DATABASE_URL"]
 db = SQLAlchemy(app)
@@ -100,3 +103,22 @@ def get_secrets():
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
 
+@app.route("/secrets/<int:secret_id>", methods=["DELETE"])
+@token_required
+def delete_secret(secret_id):
+    secret = Secret.query.filter_by(id=secret_id, user_id=request.user_id).first()
+    if not secret:
+        return jsonify({"message": "Secret not found ❌"}), 404
+    db.session.delete(secret)
+    db.session.commit()
+    return jsonify({"message": "Secret deleted ✅"})
+
+@app.route("/register", methods=["POST"])
+@limiter.limit("5 per minute")
+def register():
+    ...
+
+@app.route("/login", methods=["POST"])
+@limiter.limit("10 per minute")
+def login():
+    ...

@@ -4,3 +4,4 @@ flask-sqlalchemy
 bcrypt
 PyJWT
 gunicorn
+flask-limiter
